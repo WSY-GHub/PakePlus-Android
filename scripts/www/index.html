@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>南京地铁 · 六线版（终极版）</title>
+    <style>
+            * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+        body { background: #f0f2f5; display: flex; justify-content: center; padding: 12px; margin: 0; }
+        .container { height: 90vh;max-height: 95vh;display: flex;flex-direction: column;max-width: 100%; width: 100%; background: white; border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); padding: 16px; overflow: hidden; }
+        h2 { margin: 0 0 6px 0; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+        .sub { color: #888; font-size: 13px; font-weight: normal; }
+        .input-area { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; align-items: center; }
+        .input-area input { flex: 1; min-width: 80px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 16px; font-size: 14px; outline: none; background: #f8f9fc; }
+        .input-area button { background: #1a73e8; color: white; border: none; padding: 8px 18px; border-radius: 30px; font-weight: 600; cursor: pointer; transition: 0.2s; white-space: nowrap; font-size: 14px; }
+        .input-area button:active { transform: scale(0.95); background: #1557b0; }
+        .input-area .pick-btn { background: #ffb74d; color: #333; padding: 8px 14px; font-size: 13px; }
+        .input-area .pick-btn.active { background: #f57c00; color: white; box-shadow: 0 0 0 2px #f57c00; }
+        .input-area .pick-btn:active { transform: scale(0.95); }
+        #mapCanvas { flex-shrink: 0;max-height: 70vh;width: 100%; height: auto; aspect-ratio: 8000/2800; background: #fcfcfc; border-radius: 16px; border: 1px solid #eee; display: block; margin: 8px 0; touch-action: none; cursor: grab; }
+        #mapCanvas:active { cursor: grabbing; }
+        .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 10px 0; font-size: 12px; color: #333; }
+        .legend span { display: flex; align-items: center; gap: 4px; }
+        .color-dot { display: inline-block; width: 18px; height: 4px; border-radius: 4px; }
+        .result-area { margin-top: 10px; max-height: 300px; overflow-y: auto; border-top: 1px solid #f0f0f0; padding-top: 10px; }
+        .path-item { background: #f8f9fc; padding: 10px 14px; border-radius: 14px; margin-bottom: 6px; cursor: pointer; border-left: 4px solid #ccc; transition: 0.2s; }
+        .path-item.active { border-left-color: #1a73e8; background: #e8f0fe; }
+        .path-item .title { font-weight: 600; display: flex; justify-content: space-between; font-size: 13px; }
+        .path-item .detail { font-size: 12px; color: #555; margin-top: 3px; }
+        .path-item .transfer-tip { font-size: 11px; color: #c62828; background: #ffebee; padding: 2px 8px; border-radius: 12px; display: inline-block; margin-top: 3px; }
+        .empty-state { text-align: center; color: #999; padding: 16px 0; font-size: 13px; }
+        .info-note { font-size: 11px; color: #999; margin-top: 4px; }
+        .zoom-hint { font-size: 12px; color: #666; margin: 4px 0; }    </style>
+</head>
+<body>
+<div class="container">
+    <h2>🚇 南京地铁 · 六线版 <span class="sub">终极版</span></h2>
+    <div class="legend">
+        <span><span class="color-dot" style="background:#006400;"></span> 3号线</span>
+        <span><span class="color-dot" style="background:#FFD700;"></span> 5号线</span>
+        <span><span class="color-dot" style="background:#8B4513;"></span> 7号线</span>
+        <span><span class="color-dot" style="background:#90EE90;"></span> S1</span>
+        <span><span class="color-dot" style="background:#800080;"></span> S3</span>
+        <span><span class="color-dot" style="background:#FFC0CB;"></span> S7</span>
+    </div>
+    <div class="input-area">
+        <input id="startInput" placeholder="起点站" value="林场">
+        <button id="pickStartBtn" class="pick-btn">📍 起点</button>
+        <input id="endInput" placeholder="终点站" value="无想山">
+        <button id="pickEndBtn" class="pick-btn">🏁 终点</button>
+        <button id="searchBtn">🌊 泛洪</button>
+    </div>
+    <div class="zoom-hint">🖱️ 滚轮缩放 · 拖拽平移 · 点击站点拾取</div>
+    <canvas id="mapCanvas" width="8000" height="2800"></canvas>
+    <div class="result-area" id="resultArea">
+        <div class="empty-state">👆 输入起点终点，点击搜索</div>
+    </div>
+    <div class="info-note">💡 点击方案高亮路线 · 换乘站自然交汇</div>
+</div>
+<script>
+    // ============================================================
+    // 1. 核心配置
+    // ============================================================
+    const KEPT_LINES = ['3', '5', '7', 'S1', 'S3', 'S7'];
+
+    const LINE_COLORS = {
+        '3': '#006400',
+        '5': '#FFD700',
+        '7': '#8B4513',
+        'S1': '#90EE90',
+        'S3': '#800080',
+        'S7': '#FFC0CB'
+    };
+    const LINE_NAMES = {
+        '3': '3号线', '5': '5号线', '7': '7号线',
+        'S1': 'S1号线', 'S3': 'S3号线', 'S7': 'S7号线'
+    };
+
+    // ============================================================
+    // 2. 站点数据（福建路换乘站修正，Y=1800，5号线左段斜向连接）
+    // ============================================================
+    const STATIONS = [
+        // ---- 3号线 (垂直主轴，X=2500) ----
+        { id: '林场', x: 2500, y: 400, lines: ['3'] },
+        { id: '星火路', x: 2500, y: 530, lines: ['3'] },
+        { id: '东大成贤学院', x: 2500, y: 660, lines: ['3'] },
+        { id: '泰冯路', x: 2500, y: 790, lines: ['3'] },
+        { id: '天润城', x: 2500, y: 920, lines: ['3'] },
+        { id: '柳洲东路', x: 2500, y: 1000, lines: ['3'] },
+        { id: '上元门', x: 2500, y: 1060, lines: ['3'] },
+        { id: '五塘广场', x: 2500, y: 1120, lines: ['3', '7'] },
+        { id: '小市', x: 2500, y: 1220, lines: ['3'] },
+        { id: '南京站', x: 2500, y: 1320, lines: ['3'] },
+        { id: '南京林业大学·新庄', x: 2500, y: 1420, lines: ['3'] },
+        { id: '鸡鸣寺', x: 2500, y: 1520, lines: ['3'] },
+        { id: '浮桥', x: 2500, y: 1620, lines: ['3'] },
+        { id: '大行宫', x: 2500, y: 1720, lines: ['3'] },
+        { id: '常府街', x: 2500, y: 1820, lines: ['3'] },
+        { id: '夫子庙', x: 2500, y: 1920, lines: ['3', '5'] },
+        { id: '武定门', x: 2500, y: 2040, lines: ['3'] },
+        { id: '雨花门', x: 2500, y: 2160, lines: ['3'] },
+        { id: '卡子门', x: 2500, y: 2280, lines: ['3'] },
+        { id: '大明路', x: 2500, y: 2400, lines: ['3'] },
+        { id: '明发广场', x: 2500, y: 2480, lines: ['3'] },
+        { id: '南京南站', x: 2500, y: 2650, lines: ['3', 'S1', 'S3'] },
+        { id: '宏运大道', x: 2500, y: 2800, lines: ['3'] },
+        { id: '胜太西路', x: 2500, y: 2930, lines: ['3'] },
+        { id: '天元西路', x: 2500, y: 3060, lines: ['3'] },
+        { id: '九龙湖', x: 2500, y: 3190, lines: ['3'] },
+        { id: '诚信大道', x: 2500, y: 3250, lines: ['3', '5'] },
+        { id: '东大九龙湖校区', x: 2500, y: 3380, lines: ['3'] },
+        { id: '秣周东路', x: 2500, y: 3500, lines: ['3'] },
+
+        // ---- 7号线 (垂直辅轴，X=1000，福建路Y=1800) ----
+        { id: '幕府西路', x: 1000, y: 1120, lines: ['7'] },
+        { id: '市第二医院', x: 1000, y: 1180, lines: ['7'] },
+        { id: '福建路', x: 1000, y: 1800, lines: ['7', '5'] }, // 换乘站，Y改为1800
+        { id: '古平岗', x: 1000, y: 1860, lines: ['7'] },
+        { id: '草场门', x: 1000, y: 1920, lines: ['7'] },
+        { id: '清凉山', x: 1000, y: 1980, lines: ['7'] },
+        { id: '莫愁湖', x: 1000, y: 2040, lines: ['7'] },
+        { id: '大士茶亭', x: 1000, y: 2100, lines: ['7'] },
+        { id: '南湖·省第二中医院', x: 1000, y: 2160, lines: ['7'] },
+        { id: '应天大街', x: 1000, y: 2220, lines: ['7'] },
+        { id: '梦都大街东', x: 1000, y: 2280, lines: ['7'] },
+        { id: '新城科技园', x: 1000, y: 2340, lines: ['7'] },
+        { id: '嘉陵江东街', x: 1000, y: 2400, lines: ['7'] },
+        { id: '太清路', x: 1000, y: 2500, lines: ['7'] },
+        { id: '永初路', x: 1000, y: 2600, lines: ['7', 'S3'] },
+
+        // ---- 5号线 (完整顺序，福建路Y=1800，夫子庙Y=1920，斜向连接) ----
+        // 北段水平 (Y=1920，但福建路Y=1800，所以从夫子庙向左上斜到福建路)
+        // 我们让南京西站、静海寺、下关、盐仓桥保持Y=1920，福建路Y=1800，古平岗开始调整至夫子庙水平
+        { id: '南京西站', x: 200, y: 1920, lines: ['5'] },
+        { id: '静海寺', x: 350, y: 1920, lines: ['5'] },
+        { id: '下关', x: 500, y: 1920, lines: ['5'] },
+        { id: '盐仓桥', x: 650, y: 1920, lines: ['5'] },
+        // 福建路换乘站Y=1800
+        { id: '福建路', x: 1000, y: 1800, lines: ['5', '7'] },
+        // 从福建路到夫子庙斜向连接，中间站点古平岗、青春广场、云南路、五台山、上海路、朝天宫、张府园，Y从1800过渡到1920
+        { id: '古平岗', x: 1150, y: 1820, lines: ['5'] },
+        { id: '青春广场', x: 1300, y: 1840, lines: ['5'] },
+        { id: '云南路', x: 1450, y: 1860, lines: ['5'] },
+        { id: '五台山', x: 1600, y: 1880, lines: ['5'] },
+        { id: '上海路', x: 1750, y: 1900, lines: ['5'] },
+        { id: '朝天宫', x: 1900, y: 1910, lines: ['5'] },
+        { id: '张府园', x: 2050, y: 1920, lines: ['5'] },
+        // 夫子庙换乘站Y=1920
+        { id: '夫子庙', x: 2500, y: 1920, lines: ['5', '3'] },
+        // 夫子庙向右水平
+        { id: '通济门', x: 2800, y: 1920, lines: ['5'] },
+        { id: '光华门', x: 3100, y: 1920, lines: ['5'] },
+        { id: '石门坎', x: 3400, y: 1920, lines: ['5'] },
+        { id: '七桥瓮', x: 3700, y: 1920, lines: ['5'] },
+        { id: '大校场', x: 4000, y: 1920, lines: ['5'] },
+        { id: '神机营', x: 4300, y: 1920, lines: ['5'] },
+        { id: '东山', x: 4500, y: 1920, lines: ['5'] },
+        // 垂直段向下
+        { id: '香樟园', x: 4500, y: 2100, lines: ['5'] },
+        { id: '文靖路', x: 4500, y: 2280, lines: ['5'] },
+        { id: '新亭路', x: 4500, y: 2460, lines: ['5'] },
+        { id: '竹山路', x: 4500, y: 2640, lines: ['5'] },
+        { id: '科宁路', x: 4500, y: 2820, lines: ['5'] },
+        // 南段水平 (Y=3250)
+        { id: '前庄', x: 4500, y: 3250, lines: ['5'] },
+        { id: '诚信大道', x: 2500, y: 3250, lines: ['5', '3'] },
+        { id: '九龙湖南', x: 1900, y: 3250, lines: ['5'] },
+        { id: '吉印大道', x: 1600, y: 3250, lines: ['5', 'S1'] },
+
+        // ---- S1号线 (南京南站向左下方斜接) ----
+        { id: '翠屏山', x: 1800, y: 2800, lines: ['S1'] },
+        { id: '河海大学·佛城西路', x: 1800, y: 2950, lines: ['S1'] },
+        // 吉印大道已定义
+        { id: '正方中路', x: 1800, y: 3400, lines: ['S1'] },
+        { id: '翔宇路北', x: 1800, y: 3550, lines: ['S1'] },
+        { id: '翔宇路南', x: 1800, y: 3700, lines: ['S1'] },
+        { id: '禄口机场', x: 1800, y: 3850, lines: ['S1'] },
+        { id: '空港新城江宁', x: 1800, y: 4000, lines: ['S1', 'S7'] },
+
+        // ---- S3号线 (水平，Y=2600) ----
+        // 永初路已定义
+        { id: '油坊桥', x: 1300, y: 2600, lines: ['S3'] },
+        { id: '贾西', x: 1500, y: 2600, lines: ['S3'] },
+        { id: '春江路', x: 1700, y: 2600, lines: ['S3'] },
+        { id: '铁心桥', x: 1900, y: 2600, lines: ['S3'] },
+        { id: '景明佳园', x: 2100, y: 2600, lines: ['S3'] },
+        // 南京南站已定义
+
+        // ---- S7号线 (水平，Y=4000) ----
+        // 空港新城江宁已定义
+        { id: '柘塘', x: 2100, y: 4000, lines: ['S7'] },
+        { id: '空港新城溧水', x: 2400, y: 4000, lines: ['S7'] },
+        { id: '群力', x: 2700, y: 4000, lines: ['S7'] },
+        { id: '卧龙湖', x: 3000, y: 4000, lines: ['S7'] },
+        { id: '溧水', x: 3300, y: 4000, lines: ['S7'] },
+        { id: '中山湖', x: 3600, y: 4000, lines: ['S7'] },
+        { id: '幸庄', x: 3900, y: 4000, lines: ['S7'] },
+        { id: '无想山', x: 4200, y: 4000, lines: ['S7'] },
+    ];
+
+    // ============================================================
+    // 3. 线路顺序（严格按照您的顺序，7号线顺序包含福建路）
+    // ============================================================
+    const LINE_ROUTES = {
+        '3': [
+            '林场', '星火路', '东大成贤学院', '泰冯路', '天润城', '柳洲东路',
+            '上元门', '五塘广场', '小市', '南京站', '南京林业大学·新庄', '鸡鸣寺', '浮桥',
+            '大行宫', '常府街', '夫子庙', '武定门', '雨花门', '卡子门', '大明路', '明发广场',
+            '南京南站', '宏运大道', '胜太西路', '天元西路', '九龙湖', '诚信大道',
+            '东大九龙湖校区', '秣周东路'
+        ],
+        '7': [
+            '五塘广场', '幕府西路', '市第二医院', '福建路', '古平岗', '草场门',
+            '清凉山', '莫愁湖', '大士茶亭', '南湖·省第二中医院', '应天大街',
+            '梦都大街东', '新城科技园', '嘉陵江东街', '太清路', '永初路'
+        ],
+        '5': [
+            '南京西站', '静海寺', '下关', '盐仓桥', '福建路', '古平岗', '青春广场',
+            '云南路', '五台山', '上海路', '朝天宫', '张府园', '夫子庙',
+            '通济门', '光华门', '石门坎', '七桥瓮', '大校场', '神机营', '东山',
+            '香樟园', '文靖路', '新亭路', '竹山路', '科宁路',
+            '前庄', '诚信大道', '九龙湖南', '吉印大道'
+        ],
+        'S1': [
+            '南京南站', '翠屏山', '河海大学·佛城西路', '吉印大道',
+            '正方中路', '翔宇路北', '翔宇路南', '禄口机场', '空港新城江宁'
+        ],
+        'S3': [
+            '永初路', '油坊桥', '贾西', '春江路', '铁心桥', '景明佳园', '南京南站'
+        ],
+        'S7': [
+            '空港新城江宁', '柘塘', '空港新城溧水', '群力', '卧龙湖',
+            '溧水', '中山湖', '幸庄', '无想山'
+        ]
+    };
+
+    // ============================================================
+    // 4. 换乘备注（不变）
+    // ============================================================
+    const TRANSFER_TIPS = {
+        '南京南站': { difficulty: 8, tip: '3/S1/S3换乘，大站步行长，预留10分钟' },
+        '夫子庙': { difficulty: 6, tip: '3/5换乘，通道较长，步行约6分钟' },
+        '诚信大道': { difficulty: 5, tip: '3/5换乘，通道中等，步行约5分钟' },
+        '吉印大道': { difficulty: 6, tip: '5/S1换乘，通道较长，步行约7分钟' },
+        '永初路': { difficulty: 4, tip: '7/S3换乘，通道较短，步行约4分钟' },
+        '福建路': { difficulty: 5, tip: '5/7换乘，通道中等，步行约5分钟' },
+        '五塘广场': { difficulty: 5, tip: '3/7换乘，通道中等，步行约5分钟' },
+        '空港新城江宁': { difficulty: 4, tip: 'S1/S7换乘，通道中等，步行约4分钟' }
+    };
+
+    // ============================================================
+    // 5. 构建邻接表与搜索算法（不变）
+    // ============================================================
+    const stationMap = {};
+    STATIONS.forEach(s => stationMap[s.id] = s);
+
+    const adj = {};
+    STATIONS.forEach(s => adj[s.id] = []);
+    KEPT_LINES.forEach(lineKey => {
+        const route = LINE_ROUTES[lineKey];
+        if (!route) return;
+        for (let i = 0; i < route.length - 1; i++) {
+            const a = route[i], b = route[i+1];
+            if (!adj[a].includes(b)) adj[a].push(b);
+            if (!adj[b].includes(a)) adj[b].push(a);
+        }
+    });
+
+    function findAllPaths(start, end) {
+        const visited = new Set();
+        const paths = [];
+        const dfs = (current, path) => {
+            if (current === end) { paths.push([...path]); return; }
+            visited.add(current);
+            for (const neighbor of adj[current] || []) {
+                if (!visited.has(neighbor)) {
+                    path.push(neighbor);
+                    dfs(neighbor, path);
+                    path.pop();
+                }
+            }
+            visited.delete(current);
+        };
+        dfs(start, [start]);
+        return paths;
+    }
+
+    function getTransferSequence(path) {
+        const transfers = [];
+        for (let i = 0; i < path.length; i++) {
+            const station = stationMap[path[i]];
+            const keptLines = station.lines.filter(l => KEPT_LINES.includes(l));
+            if (keptLines.length > 1 && i > 0) {
+                const prev = stationMap[path[i-1]];
+                const next = stationMap[path[i+1]];
+                if (prev && next) {
+                    const fromLine = prev.lines.find(l => keptLines.includes(l));
+                    const toLine = next.lines.find(l => keptLines.includes(l));
+                    if (fromLine && toLine && fromLine !== toLine) {
+                        transfers.push({
+                            station: path[i],
+                            from: fromLine,
+                            to: toLine,
+                            tip: TRANSFER_TIPS[path[i]]
+                        });
+                    }
+                }
+            }
+        }
+        return transfers;
+    }
+
+    function calcDifficulty(transfers) {
+        let sum = 0;
+        transfers.forEach(t => {
+            if (t.tip) sum += t.tip.difficulty || 0;
+            else sum += 5;
+        });
+        return sum;
+    }
+
+    // ============================================================
+    // 6. 绘图引擎（不变）
+    // ============================================================
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    const W = 8000, H = 2800;
+
+    let scale = 1.0;
+    let panX = 0, panY = 0;
+    const MIN_SCALE = 0.3;
+    const MAX_SCALE = 3.0;
+
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let panStartX = 0, panStartY = 0;
+    let hasDragged = false;
+
+    function isKeptStation(station) {
+        return station.lines.some(l => KEPT_LINES.includes(l));
+    }
+
+    let currentHighlightPath = null;
+
+    function drawMap(highlightPath = null) {
+        ctx.clearRect(0, 0, W, H);
+        ctx.save();
+        ctx.translate(W/2 + panX, H/2 + panY);
+        ctx.scale(scale, scale);
+        ctx.translate(-W/2, -H/2);
+        ctx.imageSmoothingEnabled = true;
+
+        const baseFontSize = 18;
+        const fontSize = Math.max(12, baseFontSize * scale);
+        const circleRadius = Math.max(4, 8 * scale);
+        const highlightRadius = Math.max(6, 14 * scale);
+        const transferRadius = Math.max(5, 12 * scale);
+        const lineWidth = Math.max(3, 6 * scale);
+        const highlightLineWidth = Math.max(5, 10 * scale);
+
+        KEPT_LINES.forEach(lineKey => {
+            const route = LINE_ROUTES[lineKey];
+            if (!route) return;
+            ctx.beginPath();
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = lineWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            route.forEach((sid, idx) => {
+                const s = stationMap[sid];
+                if (!s) return;
+                if (idx === 0) ctx.moveTo(s.x, s.y);
+                else ctx.lineTo(s.x, s.y);
+            });
+            ctx.stroke();
+        });
+
+        STATIONS.forEach(s => {
+            if (!isKeptStation(s)) return;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, circleRadius, 0, Math.PI * 2);
+            ctx.fillStyle = '#ccc';
+            ctx.fill();
+            ctx.strokeStyle = '#aaa';
+            ctx.lineWidth = 1 * scale;
+            ctx.stroke();
+            ctx.fillStyle = '#222';
+            ctx.font = `bold ${fontSize}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(s.id, s.x, s.y - circleRadius - 4 * scale);
+        });
+
+        if (highlightPath && highlightPath.length > 0) {
+            for (let i = 0; i < highlightPath.length - 1; i++) {
+                const a = stationMap[highlightPath[i]];
+                const b = stationMap[highlightPath[i+1]];
+                if (!a || !b) continue;
+                let commonLine = null;
+                for (const l of a.lines) {
+                    if (b.lines.includes(l) && KEPT_LINES.includes(l)) {
+                        commonLine = l;
+                        break;
+                    }
+                }
+                if (commonLine) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = LINE_COLORS[commonLine];
+                    ctx.lineWidth = highlightLineWidth;
+                    ctx.lineCap = 'round';
+                    ctx.moveTo(a.x, a.y);
+                    ctx.lineTo(b.x, b.y);
+                    ctx.stroke();
+                }
+            }
+            highlightPath.forEach(sid => {
+                const s = stationMap[sid];
+                if (!s || !isKeptStation(s)) return;
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, highlightRadius, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.strokeStyle = '#1a73e8';
+                ctx.lineWidth = 3 * scale;
+                ctx.stroke();
+                ctx.fillStyle = '#1a73e8';
+                ctx.font = `bold ${fontSize}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(s.id, s.x, s.y - highlightRadius - 4 * scale);
+            });
+        } else {
+            STATIONS.forEach(s => {
+                if (!isKeptStation(s)) return;
+                const keptLines = s.lines.filter(l => KEPT_LINES.includes(l));
+                if (keptLines.length > 1) {
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, transferRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffb74d';
+                    ctx.fill();
+                    ctx.strokeStyle = '#f57c00';
+                    ctx.lineWidth = 2 * scale;
+                    ctx.stroke();
+                    ctx.fillStyle = '#333';
+                    ctx.font = `bold ${fontSize * 0.7}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillText('🔄', s.x, s.y - transferRadius - 3 * scale);
+                }
+            });
+        }
+        ctx.restore();
+    }
+
+    // ============================================================
+    // 7. 交互（灵敏度提升）
+    // ============================================================
+    function getCanvasCoords(e) {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (e.clientX - rect.left) * (W / rect.width);
+        const mouseY = (e.clientY - rect.top) * (H / rect.height);
+        const cx = W/2, cy = H/2;
+        const rawX = (mouseX - cx - panX) / scale + cx;
+        const rawY = (mouseY - cy - panY) / scale + cy;
+        return { x: rawX, y: rawY };
+    }
+
+      // ============================================================
+    // 触摸事件支持（手机专用）
+    // ============================================================
+    let lastTouchX = 0, lastTouchY = 0;
+    let lastPinchDist = 0;
+
+    canvas.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            // 单指：准备拖拽
+            const touch = e.touches[0];
+            lastTouchX = touch.clientX;
+            lastTouchY = touch.clientY;
+            isDragging = true;
+            hasDragged = false;
+            // 记录当前pan值，用于计算增量
+            panStartX = panX;
+            panStartY = panY;
+        } else if (e.touches.length === 2) {
+            // 双指：准备缩放
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            const dx = touch1.clientX - touch2.clientX;
+            const dy = touch1.clientY - touch2.clientY;
+            lastPinchDist = Math.sqrt(dx * dx + dy * dy);
+        }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', function(e) {
+        e.preventDefault(); // 阻止页面滚动
+        if (e.touches.length === 1 && isDragging) {
+            // 单指拖拽平移
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = W / rect.width;
+            const scaleY = H / rect.height;
+            const dx = (touch.clientX - lastTouchX) * scaleX;
+            const dy = (touch.clientY - lastTouchY) * scaleY;
+            panX = panStartX + dx;
+            panY = panStartY + dy;
+            if (Math.sqrt(dx*dx + dy*dy) > 5) hasDragged = true;
+            drawMap(currentHighlightPath);
+        } else if (e.touches.length === 2) {
+            // 双指捏合缩放
+            const touch1 = e.touches[0];
+            const touch2 = e.touches[1];
+            const dx = touch1.clientX - touch2.clientX;
+            const dy = touch1.clientY - touch2.clientY;
+            const currentDist = Math.sqrt(dx * dx + dy * dy);
+            if (lastPinchDist > 0) {
+                const delta = currentDist / lastPinchDist;
+                let newScale = scale * delta;
+                newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+                // 以双指中心点缩放
+                const rect = canvas.getBoundingClientRect();
+                const centerX = (touch1.clientX + touch2.clientX) / 2;
+                const centerY = (touch1.clientY + touch2.clientY) / 2;
+                const mouseX = (centerX - rect.left) * (W / rect.width);
+                const mouseY = (centerY - rect.top) * (H / rect.height);
+                const cx = W/2, cy = H/2;
+                panX = panX + (mouseX - cx) * (1 - scale / newScale);
+                panY = panY + (mouseY - cy) * (1 - scale / newScale);
+                scale = newScale;
+                drawMap(currentHighlightPath);
+            }
+            lastPinchDist = currentDist;
+        }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', function(e) {
+        isDragging = false;
+        lastPinchDist = 0;
+    }, { passive: false });
+
+  canvas.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (e.clientX - rect.left) * (W / rect.width);
+        const mouseY = (e.clientY - rect.top) * (H / rect.height);
+        const cx = W/2, cy = H/2;
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        let newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
+        panX = panX + (mouseX - cx) * (1 - scale / newScale);
+        panY = panY + (mouseY - cy) * (1 - scale / newScale);
+        scale = newScale;
+        drawMap(currentHighlightPath);
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', function(e) {
+        isDragging = true;
+        hasDragged = false;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        panStartX = panX;
+        panStartY = panY;
+        canvas.style.cursor = 'grabbing';
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        if (Math.sqrt(dx*dx + dy*dy) > 10) hasDragged = true;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = W / rect.width;
+        const scaleY = H / rect.height;
+        panX = panStartX + dx * scaleX;
+        panY = panStartY + dy * scaleY;
+        drawMap(currentHighlightPath);
+    });
+
+    window.addEventListener('mouseup', function(e) {
+        if (isDragging) {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        }
+    });
+
+    let pickMode = null;
+
+    function findStationAt(rawX, rawY) {
+        const threshold = 50 / scale;
+        let closest = null;
+        let minDist = Infinity;
+        STATIONS.forEach(s => {
+            if (!isKeptStation(s)) return;
+            const dx = s.x - rawX, dy = s.y - rawY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < threshold && dist < minDist) {
+                minDist = dist;
+                closest = s;
+            }
+        });
+        return closest;
+    }
+
+    canvas.addEventListener('click', function(e) {
+        if (isDragging || hasDragged) return;
+        if (!pickMode) return;
+        const raw = getCanvasCoords(e);
+        const station = findStationAt(raw.x, raw.y);
+        if (!station) return;
+        if (pickMode === 'start') {
+            document.getElementById('startInput').value = station.id;
+        } else {
+            document.getElementById('endInput').value = station.id;
+        }
+        pickMode = null;
+        document.getElementById('pickStartBtn').classList.remove('active');
+        document.getElementById('pickEndBtn').classList.remove('active');
+        onSearch();
+    });
+
+    document.getElementById('pickStartBtn').addEventListener('click', function() {
+        if (pickMode === 'start') {
+            pickMode = null;
+            this.classList.remove('active');
+        } else {
+            pickMode = 'start';
+            this.classList.add('active');
+            document.getElementById('pickEndBtn').classList.remove('active');
+        }
+    });
+    document.getElementById('pickEndBtn').addEventListener('click', function() {
+        if (pickMode === 'end') {
+            pickMode = null;
+            this.classList.remove('active');
+        } else {
+            pickMode = 'end';
+            this.classList.add('active');
+            document.getElementById('pickStartBtn').classList.remove('active');
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (pickMode && !e.target.closest('.input-area') && e.target !== canvas) {
+            pickMode = null;
+            document.getElementById('pickStartBtn').classList.remove('active');
+            document.getElementById('pickEndBtn').classList.remove('active');
+        }
+    });
+
+    // ============================================================
+    // 8. 搜索与结果渲染
+    // ============================================================
+    const startInput = document.getElementById('startInput');
+    const endInput = document.getElementById('endInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const resultArea = document.getElementById('resultArea');
+    let activePathIndex = -1;
+
+    function renderResults(paths) {
+        if (!paths || paths.length === 0) {
+            resultArea.innerHTML = `<div class="empty-state">😅 未找到路径，试试其他站点</div>`;
+            currentHighlightPath = null;
+            drawMap(null);
+            return;
+        }
+
+        const pathsWithScore = paths.map((p, idx) => {
+            const transfers = getTransferSequence(p);
+            const score = calcDifficulty(transfers);
+            return { path: p, transfers, score, idx };
+        });
+        pathsWithScore.sort((a, b) => a.score - b.score);
+
+        let html = `<div style="font-size:13px;color:#666;margin-bottom:6px;">找到 ${pathsWithScore.length} 种走法：</div>`;
+        pathsWithScore.forEach((item, index) => {
+            const pathStr = item.path.join(' → ');
+            const transferNames = item.transfers.map(t => `${t.station} (${LINE_NAMES[t.from]}→${LINE_NAMES[t.to]})`).join(' | ');
+            const tipText = item.transfers.map(t => t.tip ? t.tip.tip : '').filter(Boolean).join('；');
+            const scoreText = item.score > 0 ? `折腾指数 ${item.score}` : '零换乘直达！';
+            const isActive = (activePathIndex === index);
+            html += `
+                <div class="path-item ${isActive ? 'active' : ''}" data-index="${index}">
+                    <div class="title">
+                        <span>方案 ${index+1}: ${pathStr}</span>
+                        <span style="color:${item.score > 6 ? '#c62828' : '#2e7d32'}">${scoreText}</span>
+                    </div>
+                    ${transferNames ? `<div class="detail">🔄 ${transferNames}</div>` : ''}
+                    ${tipText ? `<div class="transfer-tip">💡 ${tipText}</div>` : ''}
+                </div>
+            `;
+        });
+        resultArea.innerHTML = html;
+
+        document.querySelectorAll('.path-item').forEach(el => {
+            el.addEventListener('click', function() {
+                const idx = parseInt(this.dataset.index);
+                activePathIndex = idx;
+                const selected = pathsWithScore[idx];
+                if (selected) {
+                    currentHighlightPath = selected.path;
+                    drawMap(selected.path);
+                }
+                document.querySelectorAll('.path-item').forEach(p => p.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        if (pathsWithScore.length > 0) {
+            activePathIndex = 0;
+            currentHighlightPath = pathsWithScore[0].path;
+            drawMap(pathsWithScore[0].path);
+            document.querySelector('.path-item')?.classList.add('active');
+        }
+    }
+
+    function onSearch() {
+        const start = startInput.value.trim();
+        const end = endInput.value.trim();
+        if (!start || !end) { alert('请输入起点和终点'); return; }
+        if (!stationMap[start]) { alert(`未找到站点: ${start}`); return; }
+        if (!stationMap[end]) { alert(`未找到站点: ${end}`); return; }
+        if (start === end) { alert('起点终点相同'); return; }
+        const paths = findAllPaths(start, end);
+        renderResults(paths);
+    }
+
+    searchBtn.addEventListener('click', onSearch);
+    startInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onSearch(); });
+    endInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onSearch(); });
+
+    drawMap(null);
+</script>
+</body>
+</html>
